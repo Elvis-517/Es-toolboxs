@@ -79,14 +79,19 @@ type ThemeSettings = {
   backgroundColor: string
   backgroundImage: string
   backgroundImageName: string
+  backgroundBrightness: number
+  backgroundContrast: number
+  backgroundSaturation: number
   backgroundOpacity: number
   backgroundBlur: number
+  backgroundDarkOverlay: number
   backgroundScope: 'global' | 'chat'
   hoverBackgroundColor: string
   panelGlassBlur: number
   bubbleGlassBlur: number
   composerGlassBlur: number
   sidebarGlassBlur: number
+  sidebarOpacity: number
   hoverGlassBlur: number
   fontSize: number
   showAvatars: boolean
@@ -132,11 +137,11 @@ type StreamEvent = {
 }
 
 const providers: Provider[] = [
-  { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', note: '官方接口' },
-  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro', note: '支持思考模型' },
-  { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', note: '聚合多模型' },
-  { id: 'ollama', name: 'Ollama', baseUrl: 'http://localhost:11434/v1', model: 'qwen2.5:7b', note: '本机模型' },
-  { id: 'custom', name: '自定义', baseUrl: '', model: '', note: '手动填写 API 商家' },
+    { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', note: '官方接口' },
+    { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro', note: '支持思考模型' },
+    { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', note: '聚合多模型' },
+    { id: 'ollama', name: 'Ollama', baseUrl: 'http://localhost:11434/v1', model: 'qwen2.5:7b', note: '本机模型' },
+    { id: 'custom', name: '自定义', baseUrl: '', model: '', note: '手动填写 API 商家' },
 ]
 
 const defaultSettings: Settings = {
@@ -153,14 +158,19 @@ const defaultSettings: Settings = {
     backgroundColor: '#f7f7f4',
     backgroundImage: '',
     backgroundImageName: '',
+    backgroundBrightness: 100,
+    backgroundContrast: 100,
+    backgroundSaturation: 100,
     backgroundOpacity: 92,
     backgroundBlur: 0,
+    backgroundDarkOverlay: 0,
     backgroundScope: 'chat',
     hoverBackgroundColor: '#ececec',
     panelGlassBlur: 16,
     bubbleGlassBlur: 0,
     composerGlassBlur: 18,
     sidebarGlassBlur: 10,
+    sidebarOpacity: 62,
     hoverGlassBlur: 6,
     fontSize: 16,
     showAvatars: true,
@@ -180,6 +190,66 @@ const defaultSettings: Settings = {
 }
 
 const storageKey = 'ai-talking-state-v1'
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('\u56fe\u7247\u8bfb\u53d6\u5931\u8d25\uff0c\u8bf7\u6362\u4e00\u5f20\u56fe\u7247\u518d\u8bd5\u3002'))
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('\u6d4f\u89c8\u5668\u65e0\u6cd5\u89e3\u7801\u8fd9\u5f20\u56fe\u7247\uff0c\u8bf7\u786e\u8ba4\u6587\u4ef6\u6ca1\u6709\u635f\u574f\u3002'))
+    image.src = src
+  })
+}
+
+async function normalizeBackgroundImage(file: File) {
+  const isImageFile = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|avif)$/i.test(file.name)
+  if (!isImageFile) throw new Error('\u8bf7\u9009\u62e9\u56fe\u7247\u6587\u4ef6\u3002')
+
+  const dataUrl = await fileToDataUrl(file)
+  const image = await loadImage(dataUrl)
+  const maxSide = 2200
+  const targetLength = 2_400_000
+  const largestSide = Math.max(image.naturalWidth, image.naturalHeight)
+  const baseScale = largestSide > maxSide ? maxSide / largestSide : 1
+  const isPng = file.type === 'image/png' || dataUrl.startsWith('data:image/png') || /\.png$/i.test(file.name)
+  const shouldCompress = dataUrl.length > targetLength || baseScale < 1
+  if (!shouldCompress) return dataUrl
+
+  let renderScale = baseScale
+  let quality = 0.92
+  let result = dataUrl
+
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * renderScale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * renderScale))
+    const context = canvas.getContext('2d')
+    if (!context) return result
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    if (isPng) {
+      const webp = canvas.toDataURL('image/webp', quality)
+      result = webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/png')
+    } else {
+      result = canvas.toDataURL('image/jpeg', quality)
+    }
+
+    if (result.length <= targetLength) return result
+    if (quality > 0.76) quality -= 0.08
+    else renderScale *= 0.82
+  }
+
+  return result
+}
+
 
 function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -536,13 +606,17 @@ function App() {
     '--user-bg': settings.theme.backgroundColor,
     '--user-bg-image': settings.theme.backgroundImage ? `url("${settings.theme.backgroundImage}")` : 'none',
     '--user-bg-alpha': settings.theme.backgroundOpacity / 100,
+    '--bg-image-brightness': settings.theme.backgroundBrightness / 100,
+    '--bg-image-contrast': settings.theme.backgroundContrast / 100,
+    '--bg-image-saturation': settings.theme.backgroundSaturation / 100,
     '--bg-image-blur': `${settings.theme.backgroundBlur}px`,
+    '--bg-dark-overlay': settings.theme.backgroundDarkOverlay / 100,
     '--nav-hover-bg': settings.theme.hoverBackgroundColor,
     '--panel-glass-blur': `${settings.theme.panelGlassBlur}px`,
     '--bubble-glass-blur': `${settings.theme.bubbleGlassBlur}px`,
     '--composer-glass-blur': `${settings.theme.composerGlassBlur}px`,
     '--sidebar-glass-blur': `${settings.theme.sidebarGlassBlur}px`,
-    '--sidebar-glass-alpha': `${Math.max(46, 86 - settings.theme.sidebarGlassBlur)}%`,
+    '--sidebar-glass-alpha': `${settings.theme.sidebarOpacity}%`,
     '--hover-glass-blur': `${settings.theme.hoverGlassBlur}px`,
     '--chat-font-size': `${settings.theme.fontSize}px`,
     '--custom-ink': settings.theme.textColor,
@@ -559,7 +633,11 @@ function App() {
   } as CSSProperties
 
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify({ settings, conversations, activeId }))
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ settings, conversations, activeId }))
+    } catch {
+      setNotice('\u5f53\u524d\u672c\u5730\u5b58\u50a8\u7a7a\u95f4\u4e0d\u8db3\uff0c\u80cc\u666f\u56fe\u7247\u5df2\u5e94\u7528\u4f46\u53ef\u80fd\u65e0\u6cd5\u5728\u5237\u65b0\u540e\u4fdd\u7559\u3002')
+    }
   }, [settings, conversations, activeId])
 
   const resizeComposer = useCallback(() => {
@@ -741,7 +819,7 @@ function App() {
   function addMcpServer() {
     setSettings((current) => ({
       ...current,
-      mcpServers: [...current.mcpServers, { id: createId(), name: 'MCP ??', transport: 'http', endpoint: '', enabled: true }],
+      mcpServers: [...current.mcpServers, { id: createId(), name: 'MCP 链接', transport: 'http', endpoint: '', enabled: true }],
     }))
   }
 
@@ -1030,14 +1108,18 @@ function App() {
   }
 
   async function importBackground(file: File) {
-    const reader = new FileReader()
-    reader.onload = () => {
+    try {
+      const imageUrl = await normalizeBackgroundImage(file)
       setSettings((current) => ({
         ...current,
-        theme: { ...current.theme, backgroundImage: String(reader.result || ''), backgroundImageName: file.name },
+        theme: { ...current.theme, backgroundImage: imageUrl, backgroundImageName: file.name },
       }))
+      setNotice(`\u80cc\u666f\u56fe\u7247\u5df2\u5bfc\u5165\uff1a${file.name}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '\u56fe\u7247\u8bfb\u53d6\u5931\u8d25\uff0c\u8bf7\u6362\u4e00\u5f20\u56fe\u7247\u518d\u8bd5\u3002')
+    } finally {
+      if (backgroundInputRef.current) backgroundInputRef.current.value = ''
     }
-    reader.readAsDataURL(file)
   }
 
   async function importBackup(file: File) {
@@ -1069,7 +1151,7 @@ function App() {
         </div>
         <div className="provider-card">
           <span>{settings.providerName}</span>
-          <small>{settings.model || '未设置模型'}</small>
+          <small>{settings.model || '未选择模型'}</small>
         </div>
         <div className="threads">
           {conversationGroups.map((group) => (
@@ -1126,7 +1208,7 @@ function App() {
           <header className="chat-header">
             <div>
               <h1>{activeConversation?.title || '新对话'}</h1>
-              <p>{settings.providerName} / {settings.model || '未设置模型'}</p>
+              <p>{settings.providerName} / {settings.model || '未选择模型'}</p>
             </div>
           </header>
 
@@ -1134,7 +1216,7 @@ function App() {
             {!activeConversation?.messages.length && (
               <div className="empty-state">
                 <h2>开始新的对话</h2>
-                <p>输入内容后开始聊天，AI 会被要求控制在 3000 字以内。</p>
+                <p>直接输入问题，AI 会按当前设置回复。</p>
               </div>
             )}
             {activeConversation?.messages.map((message, index) => (
@@ -1144,7 +1226,7 @@ function App() {
                   {(message.deepThink || message.webSearch || message.reasoning) && message.role === 'assistant' && (
                     <section className="reasoning">
                       <header>{message.webSearch ? '搜索 / 思考' : '思考过程'}</header>
-                      <div>{message.reasoning || (isSending && index === activeConversation.messages.length - 1 ? '正在整理思考过程...' : '暂无思考内容')}</div>
+                      <div>{message.reasoning || (isSending && index === activeConversation.messages.length - 1 ? '正在整理思考...' : '暂无思考内容')}</div>
                     </section>
                   )}
                   {message.role === 'user' && editingUserId === message.id ? (
@@ -1299,18 +1381,22 @@ function App() {
           </section>
 
           <section className="panel settings-section">
-            <div className="section-title"><h2>背景</h2><p>透明度、图片模糊和应用范围彼此独立。</p></div>
+            <div className="section-title"><h2>背景</h2><p>图片亮度、对比度、饱和度、模糊、透明度和暗色遮罩彼此独立。</p></div>
             <div className="settings-grid theme-grid">
               <label><span>背景应用范围</span><select value={settings.theme.backgroundScope} onChange={(event) => setTheme({ backgroundScope: event.target.value as ThemeSettings['backgroundScope'] })}><option value="global">全局</option><option value="chat">仅聊天区域</option></select></label>
-              <label><span>背景图片透明度 {settings.theme.backgroundOpacity}%</span><input type="range" min="0" max="100" value={settings.theme.backgroundOpacity} onChange={(event) => setTheme({ backgroundOpacity: Number(event.target.value) })} /></label>
-              <label><span>背景图片模糊 {settings.theme.backgroundBlur}px</span><input type="range" min="0" max="30" value={settings.theme.backgroundBlur} onChange={(event) => setTheme({ backgroundBlur: Number(event.target.value) })} /></label>
+              <label><span>图片亮度 {settings.theme.backgroundBrightness}%</span><input type="range" min="0" max="200" value={settings.theme.backgroundBrightness} onChange={(event) => setTheme({ backgroundBrightness: Number(event.target.value) })} /></label>
+              <label><span>图片对比度 {settings.theme.backgroundContrast}%</span><input type="range" min="0" max="200" value={settings.theme.backgroundContrast} onChange={(event) => setTheme({ backgroundContrast: Number(event.target.value) })} /></label>
+              <label><span>图片饱和度 {settings.theme.backgroundSaturation}%</span><input type="range" min="0" max="200" value={settings.theme.backgroundSaturation} onChange={(event) => setTheme({ backgroundSaturation: Number(event.target.value) })} /></label>
+              <label><span>图片模糊 {settings.theme.backgroundBlur}px</span><input type="range" min="0" max="30" value={settings.theme.backgroundBlur} onChange={(event) => setTheme({ backgroundBlur: Number(event.target.value) })} /></label>
+              <label><span>图片透明度 {settings.theme.backgroundOpacity}%</span><input type="range" min="0" max="100" value={settings.theme.backgroundOpacity} onChange={(event) => setTheme({ backgroundOpacity: Number(event.target.value) })} /></label>
+              <label><span>暗色遮罩 {settings.theme.backgroundDarkOverlay}%</span><input type="range" min="0" max="100" value={settings.theme.backgroundDarkOverlay} onChange={(event) => setTheme({ backgroundDarkOverlay: Number(event.target.value) })} /></label>
               <div className="background-upload wide">
                 <span>背景图片</span>
                 <div>
                   <button className="plain-action" type="button" onClick={() => backgroundInputRef.current?.click()}>{settings.theme.backgroundImage ? `已选择：${settings.theme.backgroundImageName || '背景图片'}` : '选择背景图片'}</button>
                   {settings.theme.backgroundImage && <button className="plain-action" type="button" onClick={() => setTheme({ backgroundImage: '', backgroundImageName: '' })}>清除背景图</button>}
                 </div>
-                <input ref={backgroundInputRef} type="file" accept="image/*" hidden onChange={(event) => event.target.files?.[0] && importBackground(event.target.files[0])} />
+                <input ref={backgroundInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" hidden onChange={(event) => event.target.files?.[0] && importBackground(event.target.files[0])} />
               </div>
             </div>
           </section>
@@ -1322,6 +1408,7 @@ function App() {
               <label><span>聊天气泡毛玻璃 {settings.theme.bubbleGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.bubbleGlassBlur} onChange={(event) => setTheme({ bubbleGlassBlur: Number(event.target.value) })} /></label>
               <label><span>输入框毛玻璃 {settings.theme.composerGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.composerGlassBlur} onChange={(event) => setTheme({ composerGlassBlur: Number(event.target.value) })} /></label>
               <label><span>左侧栏毛玻璃 {settings.theme.sidebarGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.sidebarGlassBlur} onChange={(event) => setTheme({ sidebarGlassBlur: Number(event.target.value) })} /></label>
+              <label><span>左侧透明度 {settings.theme.sidebarOpacity}%</span><input type="range" min="0" max="100" value={settings.theme.sidebarOpacity} onChange={(event) => setTheme({ sidebarOpacity: Number(event.target.value) })} /></label>
               <label><span>Hover / 选中毛玻璃 {settings.theme.hoverGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.hoverGlassBlur} onChange={(event) => setTheme({ hoverGlassBlur: Number(event.target.value) })} /></label>
             </div>
           </section>

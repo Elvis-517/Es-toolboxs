@@ -3618,3 +3618,44 @@
 .target-chars:focus-within {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
 }
+
+
+
+
+/* Background image controls only: do not alter chat layout or fixed controls. */
+.shell.bg-global::before,
+.chat-pane::before,
+.theme-preview::before {
+  background-image: var(--user-bg-image) !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--bg-image-blur)) !important;
+}
+
+.shell.bg-global::after,
+.theme-preview::after {
+  content: '' !important;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(0, 0, 0, var(--bg-dark-overlay)) !important;
+}
+
+.theme-preview::after {
+  position: absolute;
+  inset: 0;
+}
+
+.shell.bg-global .rail,
+.shell.bg-chat .rail {
+  background: color-mix(in srgb, #171717 var(--sidebar-glass-alpha), transparent) !important;
+  backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+}
+
+.shell.bg-global .conversation-list,
+.shell.bg-chat .conversation-list {
+  background: color-mix(in srgb, var(--surface) var(--sidebar-glass-alpha), transparent) !important;
+  backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+}
