@@ -3659,3 +3659,521 @@
   backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
   -webkit-backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
 }
+
+/* Match preview and real chat background rendering without changing layout. */
+.shell.bg-global::before,
+.shell.bg-chat .chat-pane::before,
+.theme-preview::before {
+  background-color: transparent !important;
+  background-image: var(--user-bg-image) !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--bg-image-blur)) !important;
+}
+
+.shell.bg-chat .chat-pane::after {
+  content: '' !important;
+  position: absolute !important;
+  top: 56px !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  background: rgba(0, 0, 0, var(--bg-dark-overlay)) !important;
+}
+
+.shell.bg-global::after,
+.theme-preview::after {
+  background: rgba(0, 0, 0, var(--bg-dark-overlay)) !important;
+}
+
+.shell.bg-global .rail,
+.shell.bg-chat .rail,
+.shell.bg-global .conversation-list,
+.shell.bg-chat .conversation-list {
+  backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+}
+
+/* Shared background preview and sidebar blur fix. */
+.theme-preview {
+  background-color: var(--user-bg) !important;
+  background-image: none !important;
+}
+
+.shell.bg-chat .chat-pane,
+.shell.bg-global .chat-pane {
+  background-color: var(--user-bg) !important;
+}
+
+.shell.bg-chat .chat-pane::before,
+.shell.bg-global::before,
+.theme-preview::before {
+  background-color: transparent !important;
+  background-image: var(--user-bg-image) !important;
+  background-size: cover !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--bg-image-blur)) !important;
+}
+
+.shell.bg-chat .chat-pane::after,
+.shell.bg-global::after,
+.theme-preview::after {
+  background: rgba(0, 0, 0, var(--bg-dark-overlay)) !important;
+}
+
+.rail,
+.conversation-list {
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.rail::before,
+.conversation-list::before {
+  content: '';
+  position: absolute;
+  inset: -48px;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--user-bg);
+  background-image:
+    linear-gradient(rgba(0, 0, 0, var(--bg-dark-overlay)), rgba(0, 0, 0, var(--bg-dark-overlay))),
+    var(--user-bg-image);
+  background-attachment: fixed;
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: var(--user-bg-alpha);
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--sidebar-glass-blur));
+  transform: translateZ(0) scale(1.03);
+}
+
+.rail::after,
+.conversation-list::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.rail::after {
+  background: color-mix(in srgb, #171717 var(--sidebar-glass-alpha), transparent);
+}
+
+.conversation-list::after {
+  background: color-mix(in srgb, var(--surface) var(--sidebar-glass-alpha), transparent);
+}
+
+.rail > *,
+.conversation-list > * {
+  position: relative;
+  z-index: 2;
+}
+
+.shell.bg-global .rail,
+.shell.bg-chat .rail,
+.shell.bg-global .conversation-list,
+.shell.bg-chat .conversation-list {
+  background: transparent !important;
+  backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--sidebar-glass-blur)) !important;
+}
+
+/* Layout-safe sidebar adjacency and stable chat-scope background. */
+.shell {
+  column-gap: 0 !important;
+  gap: 0 !important;
+}
+
+.rail {
+  grid-column: 1 !important;
+  margin: 0 !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.conversation-list {
+  grid-column: 2 !important;
+  margin: 0 !important;
+  border-left: 0 !important;
+}
+
+.shell.bg-chat::before {
+  content: '' !important;
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 356px !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  background-color: transparent !important;
+  background-image: var(--user-bg-image) !important;
+  background-size: cover !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--bg-image-blur)) !important;
+  transform: translateZ(0) scale(1.03);
+}
+
+.shell.bg-chat::after {
+  content: '' !important;
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 356px !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  background: rgba(0, 0, 0, var(--bg-dark-overlay)) !important;
+}
+
+.shell.bg-chat.sidebar-collapsed::before,
+.shell.bg-chat.sidebar-collapsed::after {
+  left: 64px !important;
+}
+
+.shell.bg-chat .chat-pane::before,
+.shell.bg-chat .chat-pane::after {
+  content: none !important;
+}
+
+.shell.bg-chat > .chat-pane,
+.shell.bg-chat > .settings-pane,
+.shell.bg-chat > .rail,
+.shell.bg-chat > .conversation-list {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 960px) {
+  .shell.bg-chat::before,
+  .shell.bg-chat::after,
+  .shell.bg-chat.sidebar-collapsed::before,
+  .shell.bg-chat.sidebar-collapsed::after {
+    left: 56px !important;
+  }
+}
+
+/* Actual blockers fix: transparent chat pane over shell background, no sidebar gap. */
+.shell.bg-chat .chat-pane {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.shell.bg-chat .settings-pane {
+  background: var(--user-bg) !important;
+}
+
+.shell:not(.sidebar-collapsed) .conversation-list {
+  margin-left: -1px !important;
+  width: calc(100% + 1px) !important;
+  border-left: 0 !important;
+}
+
+.shell:not(.sidebar-collapsed) .rail {
+  border-right: 1px solid color-mix(in srgb, var(--line) 82%, #ffffff 18%) !important;
+}
+
+/* Final three UI fixes: shared background source, persistent chat background, no sidebar gap. */
+.shell {
+  position: relative !important;
+  isolation: isolate !important;
+  display: grid !important;
+  grid-template-columns: 64px 292px minmax(0, 1fr) !important;
+  gap: 0 !important;
+  column-gap: 0 !important;
+  background: var(--user-bg) !important;
+}
+
+.shell::before,
+.shell::after,
+.chat-pane::before,
+.chat-pane::after,
+.theme-preview::before,
+.theme-preview::after,
+.messages::before {
+  content: none !important;
+}
+
+.shared-background {
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--user-bg);
+}
+
+.app-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.shell.bg-chat .app-background {
+  left: 356px;
+}
+
+.shell.bg-chat.sidebar-collapsed .app-background {
+  left: 64px;
+}
+
+.preview-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.background-base,
+.background-image,
+.background-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.background-base {
+  background: var(--user-bg);
+  z-index: 0;
+}
+
+.background-image {
+  z-index: 1;
+  background-image: var(--user-bg-image);
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: var(--user-bg-alpha);
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--bg-image-blur));
+  transform: translateZ(0) scale(1.03);
+}
+
+.background-overlay {
+  z-index: 2;
+  background: rgba(0, 0, 0, var(--bg-dark-overlay));
+}
+
+.shell > .rail,
+.shell > .conversation-list,
+.shell > .chat-pane,
+.shell > .settings-pane {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.shell > .rail {
+  grid-column: 1 !important;
+  width: 64px !important;
+  margin: 0 !important;
+  border-right: 0 !important;
+}
+
+.shell > .conversation-list {
+  grid-column: 2 !important;
+  width: auto !important;
+  margin: 0 !important;
+  transform: none !important;
+  border-left: 1px solid color-mix(in srgb, var(--line) 80%, transparent) !important;
+  border-right: 1px solid var(--line) !important;
+}
+
+.shell.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr) !important;
+}
+
+.shell.sidebar-collapsed > .conversation-list {
+  display: none !important;
+}
+
+.shell.bg-chat .chat-pane {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.shell.bg-chat .settings-pane {
+  background: var(--user-bg) !important;
+}
+
+.theme-preview {
+  position: relative !important;
+  overflow: hidden !important;
+  background: var(--user-bg) !important;
+  background-image: none !important;
+}
+
+.theme-preview > *:not(.shared-background) {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.rail::before,
+.conversation-list::before {
+  background-image: var(--user-bg-image) !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--sidebar-glass-blur)) !important;
+}
+
+@media (max-width: 960px) {
+  .shell,
+  .shell.sidebar-collapsed {
+    grid-template-columns: 56px minmax(0, 1fr) !important;
+  }
+
+  .shell > .rail {
+    width: 56px !important;
+  }
+
+  .shell.bg-chat .app-background,
+  .shell.bg-chat.sidebar-collapsed .app-background {
+    left: 56px;
+  }
+}
+
+/* Keep existing sidebar positioning while shared background stays behind content. */
+.shell > .rail,
+.shell > .conversation-list {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 2 !important;
+}
+
+.shell > .chat-pane,
+.shell > .settings-pane {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+/* Background scope semantics: global includes sidebars; chat includes only right content area. */
+.shell {
+  --left-area-width: 356px;
+  --rail-width: 64px;
+  display: grid !important;
+  grid-template-columns: var(--rail-width) 292px minmax(0, 1fr) !important;
+  gap: 0 !important;
+  column-gap: 0 !important;
+  background: var(--user-bg) !important;
+}
+
+.shell.sidebar-collapsed {
+  --left-area-width: var(--rail-width);
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) !important;
+}
+
+.shell::before,
+.shell::after,
+.chat-pane::before,
+.chat-pane::after,
+.theme-preview::before,
+.theme-preview::after,
+.messages::before {
+  content: none !important;
+}
+
+.shell.bg-global .app-background {
+  left: 0 !important;
+  right: 0 !important;
+}
+
+.shell.bg-chat .app-background {
+  left: var(--left-area-width) !important;
+  right: 0 !important;
+}
+
+.app-background,
+.preview-background {
+  background: var(--user-bg) !important;
+  z-index: 0 !important;
+}
+
+.background-base {
+  background: var(--user-bg) !important;
+}
+
+.background-image {
+  background-image: var(--user-bg-image) !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--bg-image-blur)) !important;
+}
+
+.background-overlay {
+  background: rgba(0, 0, 0, var(--bg-dark-overlay)) !important;
+}
+
+.shell > .rail {
+  grid-column: 1 !important;
+  width: var(--rail-width) !important;
+  margin: 0 !important;
+  border-right: 0 !important;
+}
+
+.shell > .conversation-list {
+  grid-column: 2 !important;
+  width: auto !important;
+  margin: 0 !important;
+  transform: none !important;
+  border-left: 1px solid color-mix(in srgb, var(--line) 82%, transparent) !important;
+  border-right: 1px solid var(--line) !important;
+}
+
+.shell.sidebar-collapsed > .conversation-list {
+  display: none !important;
+}
+
+.shell.bg-global .rail,
+.shell.bg-global .conversation-list {
+  background: transparent !important;
+}
+
+.shell.bg-global .rail::before,
+.shell.bg-global .conversation-list::before {
+  content: '' !important;
+  background-color: var(--user-bg) !important;
+  background-image: var(--user-bg-image) !important;
+  opacity: var(--user-bg-alpha) !important;
+  filter: brightness(var(--bg-image-brightness)) contrast(var(--bg-image-contrast)) saturate(var(--bg-image-saturation)) blur(var(--sidebar-glass-blur)) !important;
+}
+
+.shell.bg-chat .rail::before,
+.shell.bg-chat .conversation-list::before {
+  content: none !important;
+}
+
+.shell.bg-chat .rail {
+  background: #171717 !important;
+}
+
+.shell.bg-chat .conversation-list {
+  background: color-mix(in srgb, var(--surface) var(--sidebar-glass-alpha), var(--user-bg)) !important;
+}
+
+.shell.bg-chat .chat-pane,
+.shell.bg-chat .settings-pane,
+.shell.bg-global .chat-pane,
+.shell.bg-global .settings-pane {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.shell > .rail,
+.shell > .conversation-list,
+.shell > .chat-pane,
+.shell > .settings-pane {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.theme-preview {
+  background: var(--user-bg) !important;
+  background-image: none !important;
+}
+
+@media (max-width: 960px) {
+  .shell,
+  .shell.sidebar-collapsed {
+    --rail-width: 56px;
+    --left-area-width: 56px;
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) !important;
+  }
+}
+

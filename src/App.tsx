@@ -602,7 +602,7 @@ function App() {
   const setTheme = useCallback((patch: Partial<ThemeSettings>) => {
     setSettings((current) => ({ ...current, theme: { ...current.theme, ...patch } }))
   }, [])
-  const themeStyle = {
+  const backgroundStyle = {
     '--user-bg': settings.theme.backgroundColor,
     '--user-bg-image': settings.theme.backgroundImage ? `url("${settings.theme.backgroundImage}")` : 'none',
     '--user-bg-alpha': settings.theme.backgroundOpacity / 100,
@@ -611,6 +611,9 @@ function App() {
     '--bg-image-saturation': settings.theme.backgroundSaturation / 100,
     '--bg-image-blur': `${settings.theme.backgroundBlur}px`,
     '--bg-dark-overlay': settings.theme.backgroundDarkOverlay / 100,
+  }
+  const themeStyle = {
+    ...backgroundStyle,
     '--nav-hover-bg': settings.theme.hoverBackgroundColor,
     '--panel-glass-blur': `${settings.theme.panelGlassBlur}px`,
     '--bubble-glass-blur': `${settings.theme.bubbleGlassBlur}px`,
@@ -1138,6 +1141,7 @@ function App() {
 
   return (
     <main className={`shell theme-${settings.theme.mode} bg-${settings.theme.backgroundScope} ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${settings.theme.showAvatars ? 'avatars-visible' : 'avatars-hidden'}`} style={themeStyle}>
+      <div className="shared-background app-background" aria-hidden="true"><div className="background-base" /><div className="background-image" /><div className="background-overlay" /></div>
       <aside className="rail" aria-label="主导航">
         <div className="brand">A</div>
         <IconButton label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'} active={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}>≡</IconButton>
@@ -1407,7 +1411,7 @@ function App() {
               <label><span>面板毛玻璃 {settings.theme.panelGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.panelGlassBlur} onChange={(event) => setTheme({ panelGlassBlur: Number(event.target.value) })} /></label>
               <label><span>聊天气泡毛玻璃 {settings.theme.bubbleGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.bubbleGlassBlur} onChange={(event) => setTheme({ bubbleGlassBlur: Number(event.target.value) })} /></label>
               <label><span>输入框毛玻璃 {settings.theme.composerGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.composerGlassBlur} onChange={(event) => setTheme({ composerGlassBlur: Number(event.target.value) })} /></label>
-              <label><span>左侧栏毛玻璃 {settings.theme.sidebarGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.sidebarGlassBlur} onChange={(event) => setTheme({ sidebarGlassBlur: Number(event.target.value) })} /></label>
+              <label><span>边栏背景模糊 {settings.theme.sidebarGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.sidebarGlassBlur} onChange={(event) => setTheme({ sidebarGlassBlur: Number(event.target.value) })} /></label>
               <label><span>左侧透明度 {settings.theme.sidebarOpacity}%</span><input type="range" min="0" max="100" value={settings.theme.sidebarOpacity} onChange={(event) => setTheme({ sidebarOpacity: Number(event.target.value) })} /></label>
               <label><span>Hover / 选中毛玻璃 {settings.theme.hoverGlassBlur}px</span><input type="range" min="0" max="40" value={settings.theme.hoverGlassBlur} onChange={(event) => setTheme({ hoverGlassBlur: Number(event.target.value) })} /></label>
             </div>
@@ -1449,6 +1453,7 @@ function App() {
           <section className="panel settings-section preview-section">
             <div className="section-title"><h2>实时预览</h2><p>单独展示背景、气泡、思考区和 Token 样式。</p></div>
             <div className="theme-preview" aria-label="外观预览">
+              <div className="shared-background preview-background" aria-hidden="true"><div className="background-base" /><div className="background-image" /><div className="background-overlay" /></div>
               <div className="preview-title">当前外观</div>
               <section className="preview-reasoning">
                 <header>搜索 / 思考</header>
