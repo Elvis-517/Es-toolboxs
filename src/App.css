@@ -4177,3 +4177,60 @@
   }
 }
 
+/* Preview sync: use the same background layer and bubble theme variables as the real UI. */
+.theme-preview {
+  position: relative !important;
+  overflow: hidden !important;
+  background: var(--user-bg) !important;
+  background-image: none !important;
+  color: var(--ink) !important;
+}
+
+.theme-preview .preview-background {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 0 !important;
+}
+
+.theme-preview > *:not(.shared-background) {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.preview-reasoning {
+  color: var(--reasoning-ink) !important;
+  background: color-mix(in srgb, var(--reasoning-bg) var(--reasoning-bg-alpha), transparent) !important;
+  border-color: color-mix(in srgb, var(--reasoning-bg) 45%, var(--line)) !important;
+  backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+}
+
+.preview-reasoning header,
+.preview-reasoning p {
+  color: var(--reasoning-ink) !important;
+}
+
+.preview-ai {
+  color: var(--ink) !important;
+  background: color-mix(in srgb, var(--assistant-bubble) var(--assistant-bubble-alpha), transparent) !important;
+  border-color: color-mix(in srgb, var(--assistant-bubble) calc(var(--assistant-bubble-alpha) * 0.45), var(--line)) !important;
+  backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+}
+
+.preview-user {
+  color: var(--ink) !important;
+  background: color-mix(in srgb, var(--user-bubble) var(--user-bubble-alpha), transparent) !important;
+  border-color: color-mix(in srgb, var(--user-bubble) calc(var(--user-bubble-alpha) * 0.35), var(--line)) !important;
+  backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+}
+
+.preview-token {
+  color: var(--token-ink) !important;
+  background: color-mix(in srgb, var(--token-bg) var(--token-bg-alpha), transparent) !important;
+  border-color: color-mix(in srgb, var(--token-bg) 38%, var(--line)) !important;
+  backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--bubble-glass-blur)) !important;
+}
+
