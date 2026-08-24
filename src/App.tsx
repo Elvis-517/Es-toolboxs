@@ -136,6 +136,27 @@ type StreamEvent = {
   message?: string
 }
 
+type SearchDiagnosticLog = {
+  id: number
+  recordedAt: string
+  stage: string
+  message?: string
+  query: string
+  provider: string
+  attempt?: number
+  httpStatus: number
+  finalUrl: string
+  contentType: string
+  httpDate?: string
+  elapsedMs: number
+  timeout: boolean
+  errorCode: string
+  errorMessage: string
+  responsePreview: string
+  parsedCount: number
+  finalProvider: string
+}
+
 const providers: Provider[] = [
     { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', note: '官方接口' },
     { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro', note: '支持思考模型' },
@@ -427,6 +448,43 @@ function CitationChip({ source }: { source: Citation }) {
   )
 }
 
+
+async function fetchJsonApi(path: string, init?: RequestInit) {
+  const urls = [path, `http://localhost:8787${path}`]
+  let lastError: Error | null = null
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, init)
+      const contentType = response.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const preview = (await response.text()).slice(0, 80)
+        throw new Error(`????????? JSON?${contentType || 'unknown'} ${preview}`)
+      }
+      if (!response.ok) throw new Error(await response.text())
+      return response.json()
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    }
+  }
+  throw lastError || new Error('???????')
+}
+
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+}
+
 function renderInline(text: string, citations: Citation[]) {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|【source:\d+】)/g).filter(Boolean)
   return parts.map((part, index) => {
@@ -585,6 +643,7 @@ function App() {
   const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null)
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState('')
+  const [searchLogs, setSearchLogs] = useState<SearchDiagnosticLog[]>([])
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const userMessageRefs = useRef<Map<string, HTMLElement>>(new Map())
@@ -599,6 +658,7 @@ function App() {
   const conversationGroups = groupConversationsByTime(conversations)
   const lastMessageContent = activeConversation?.messages.at(-1)?.content || ''
   const userNavigatorMessages = useMemo(() => activeConversation?.messages.filter((message) => message.role === 'user') || [], [activeConversation?.messages])
+  const visibleSearchLogs = searchLogs.slice(0, 8)
   const setTheme = useCallback((patch: Partial<ThemeSettings>) => {
     setSettings((current) => ({ ...current, theme: { ...current.theme, ...patch } }))
   }, [])
@@ -735,6 +795,49 @@ function App() {
       programmaticScrollRef.current = false
     }, 220)
   }
+
+  async function copyMessageText(message: Message) {
+    const text = message.content.trim()
+    if (!text) return
+    try {
+      await writeClipboardText(text)
+      setNotice('\u5df2\u590d\u5236\u8fd9\u6761\u6d88\u606f\u3002')
+    } catch {
+      setNotice('\u590d\u5236\u5931\u8d25\uff0c\u6d4f\u89c8\u5668\u6ca1\u6709\u5141\u8bb8\u526a\u8d34\u677f\u6743\u9650\u3002')
+    }
+  }
+
+  async function refreshSearchLogs() {
+    try {
+      const payload = await fetchJsonApi('/api/search-logs') as { logs?: SearchDiagnosticLog[] }
+      setSearchLogs(payload.logs || [])
+    } catch (error) {
+      setNotice('\u8bfb\u53d6\u8054\u7f51\u641c\u7d22\u65e5\u5fd7\u5931\u8d25\uff1a' + (error instanceof Error ? error.message : '\u672a\u77e5\u9519\u8bef'))
+    }
+  }
+
+  async function clearSearchLogs() {
+    try {
+      await fetchJsonApi('/api/search-logs', { method: 'DELETE' })
+      setSearchLogs([])
+      setNotice('\u5df2\u6e05\u7a7a\u8054\u7f51\u641c\u7d22\u65e5\u5fd7\u3002')
+    } catch (error) {
+      setNotice('\u6e05\u7a7a\u8054\u7f51\u641c\u7d22\u65e5\u5fd7\u5931\u8d25\uff1a' + (error instanceof Error ? error.message : '\u672a\u77e5\u9519\u8bef'))
+    }
+  }
+
+  async function copySearchLogs() {
+    try {
+      await writeClipboardText(JSON.stringify({ copiedAt: new Date().toISOString(), logs: searchLogs }, null, 2))
+      setNotice('\u5df2\u590d\u5236\u8054\u7f51\u641c\u7d22\u65e5\u5fd7\u3002')
+    } catch {
+      setNotice('\u590d\u5236\u65e5\u5fd7\u5931\u8d25\uff0c\u6d4f\u89c8\u5668\u6ca1\u6709\u5141\u8bb8\u526a\u8d34\u677f\u6743\u9650\u3002')
+    }
+  }
+
+  useEffect(() => {
+    if (view === 'settings') refreshSearchLogs()
+  }, [view])
 
   useEffect(() => {
     if (!threadMenu) return
@@ -1229,8 +1332,13 @@ function App() {
                 <div className="message-main">
                   {(message.deepThink || message.webSearch || message.reasoning) && message.role === 'assistant' && (
                     <section className="reasoning">
-                      <header>{message.webSearch ? '搜索 / 思考' : '思考过程'}</header>
-                      <div>{message.reasoning || (isSending && index === activeConversation.messages.length - 1 ? '正在整理思考...' : '暂无思考内容')}</div>
+                      <header>{message.webSearch ? '\u641c\u7d22 / \u601d\u8003' : '\u601d\u8003\u8fc7\u7a0b'}</header>
+                      <div className="reasoning-text">{message.reasoning || (isSending && index === activeConversation.messages.length - 1 ? '\u6b63\u5728\u6574\u7406\u601d\u8003...' : '\u6682\u65e0\u601d\u8003\u5185\u5bb9')}</div>
+                      {message.webSearch && Boolean(message.citations?.length) && (
+                        <div className="reasoning-sources" aria-label="\u641c\u7d22\u6765\u6e90">
+                          {message.citations?.map((source) => <CitationChip key={`${message.id}-${source.id}`} source={source} />)}
+                        </div>
+                      )}
                     </section>
                   )}
                   {message.role === 'user' && editingUserId === message.id ? (
@@ -1239,12 +1347,13 @@ function App() {
                       <div><button type="button" onClick={() => { setEditingUserId(null); setEditingDraft('') }}>取消</button><button type="submit" disabled={!editingDraft.trim()}>提交</button></div>
                     </form>
                   ) : (
-                    <div className="bubble"><RenderMarkdown content={message.content || (isSending && index === activeConversation.messages.length - 1 ? '生成中...' : '')} citations={message.citations} /></div>
+                    <div className="bubble"><RenderMarkdown content={message.content || (isSending && index === activeConversation.messages.length - 1 ? '\u751f\u6210\u4e2d...' : '')} citations={message.citations} /></div>
                   )}
                   {message.role === 'user' && (
                     <div className="user-actions">
                       <span>{formatTime(message.createdAt)}</span>
                       <button type="button" aria-label="编辑" onClick={() => startEditingUserMessage(message)}>✎</button>
+                      {Boolean(message.content.trim()) && <button type="button" title="\u590d\u5236\u8fd9\u6761\u6d88\u606f" aria-label="\u590d\u5236\u8fd9\u6761\u6d88\u606f" onClick={() => copyMessageText(message)}>{'\u29c9'}</button>}
                       {(message.branchTotal || 1) > 1 && (
                         <span className="branch-chip">
                           <button type="button" disabled={isSending} onClick={() => switchUserBranch(message.id, -1)}>‹</button>
@@ -1266,7 +1375,8 @@ function App() {
                           <button type="button" disabled={(message.branchTotal || 1) <= 1 || isSending} onClick={() => switchMessageBranch(message.id, 1)}>&gt;</button>
                         </span>
                       )}
-                      {message.completedAt && <button type="button" onClick={() => retryMessage(message.id)}>Retry</button>}
+                      {Boolean(message.content.trim()) && <button type="button" title="\u590d\u5236\u8fd9\u6761\u6d88\u606f" aria-label="\u590d\u5236\u8fd9\u6761\u6d88\u606f" onClick={() => copyMessageText(message)}>{'\u29c9'}</button>}
+                      {sidebarCollapsed && message.completedAt && <button type="button" onClick={() => retryMessage(message.id)}>Retry</button>}
                     </div>
                   )}
                 </div>
@@ -1465,6 +1575,29 @@ function App() {
             </div>
           </section>
 
+          <section className="panel search-log-panel">
+            <div className="panel-title"><div><h2>{'\u8054\u7f51\u641c\u7d22\u65e5\u5fd7'}</h2><p>{'\u53ea\u4fdd\u7559\u6700\u65b0\u4e00\u6b21\u8054\u7f51\u7684\u94fe\u8def\u6458\u8981\uff1b\u590d\u5236\u4f1a\u590d\u5236\u8fd9\u4e00\u6b21\u7684\u5168\u90e8\u65e5\u5fd7\u3002'}</p></div><div className="actions"><button type="button" onClick={refreshSearchLogs}>{'\u5237\u65b0'}</button><button type="button" onClick={copySearchLogs} disabled={!searchLogs.length}>{'\u590d\u5236\u5168\u90e8'}</button><button type="button" onClick={clearSearchLogs} disabled={!searchLogs.length}>{'\u6e05\u7a7a'}</button></div></div>
+            <div className="search-log-list">
+              {searchLogs.length === 0 && <p className="muted">{'\u6682\u65e0\u8054\u7f51\u641c\u7d22\u65e5\u5fd7'}</p>}
+              {visibleSearchLogs.map((log) => (
+                <details className="search-log-entry" key={log.id}>
+                  <summary><strong>{log.stage || log.provider}</strong><span>{log.provider || '-'}</span><span>{log.httpStatus || (log.timeout ? 'timeout' : 'pending')}</span><span>{log.elapsedMs}ms</span><span>parsed {log.parsedCount}</span><span>{log.message || '-'}</span></summary>
+                  <dl>
+                    <div><dt>recorded</dt><dd>{log.recordedAt}</dd></div>
+                    <div><dt>query</dt><dd>{log.query}</dd></div>
+                    <div><dt>attempt</dt><dd>{log.attempt || '-'}</dd></div>
+                    <div><dt>url</dt><dd>{log.finalUrl || '-'}</dd></div>
+                    <div><dt>type</dt><dd>{log.contentType || '-'}</dd></div>
+                    <div><dt>HTTP Date</dt><dd>{log.httpDate || '-'}</dd></div>
+                    <div><dt>final</dt><dd>{log.finalProvider || '-'}</dd></div>
+                    <div><dt>error</dt><dd>{log.timeout ? 'timeout' : log.errorCode || '-'} {log.errorMessage}</dd></div>
+                  </dl>
+                  <pre>{log.responsePreview || '-'}</pre>
+                </details>
+              ))}
+              {searchLogs.length > visibleSearchLogs.length && <p className="muted">{'\u8fd8\u6709 '}{searchLogs.length - visibleSearchLogs.length}{' \u6761\u5df2\u9690\u85cf\uff0c\u590d\u5236\u65f6\u4f1a\u4e00\u8d77\u5305\u542b\u3002'}</p>}
+            </div>
+          </section>
           <section className="panel token-panel">
             <div className="section-title"><h2>Token 消耗</h2><p>优先使用接口返回的 usage；没有 usage 时显示本地估算。</p></div>
             <TokenChart conversations={conversations} />

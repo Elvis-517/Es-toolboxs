@@ -7,6 +7,44 @@ const root = fileURLToPath(new URL('.', import.meta.url))
 const distDir = join(root, 'dist')
 const port = Number(process.env.PORT || 8787)
 const logFile = join(root, 'chat-debug.log')
+const searchDiagnostics = []
+let searchDiagnosticSeq = 0
+let activeSearchRunId = ''
+
+function beginSearchDiagnostics(runId) {
+  activeSearchRunId = runId
+  searchDiagnostics.length = 0
+}
+
+function pushSearchDiagnostic(entry) {
+  if (activeSearchRunId && entry.runId && entry.runId !== activeSearchRunId) return 0
+  const next = {
+    id: ++searchDiagnosticSeq,
+    recordedAt: new Date().toISOString(),
+    stage: '', runId: '', query: '', provider: '', attempt: 0,
+    httpStatus: 0, finalUrl: '', contentType: '', httpDate: '', elapsedMs: 0,
+    timeout: false, errorCode: '', errorMessage: '', responsePreview: '',
+    parsedCount: 0, finalProvider: '', message: '',
+    ...entry,
+  }
+  searchDiagnostics.push(next)
+  return next.id
+}
+
+function updateSearchDiagnostic(id, patch) {
+  const entry = searchDiagnostics.find((item) => item.id === id)
+  if (entry) Object.assign(entry, patch)
+}
+
+function updateSearchDiagnostics(runId, patch) {
+  for (const entry of searchDiagnostics) {
+    if (entry.runId === runId) Object.assign(entry, patch)
+  }
+}
+
+function createSearchRunId() {
+  return String(Date.now()) + '-' + Math.random().toString(16).slice(2)
+}
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -27,6 +65,42 @@ const webSearchTool = {
   },
 }
 
+const browserHeaders = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 Edg/124.0',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 9000) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function errorInfo(error) {
+  return {
+    code: error?.name || error?.code || 'Error',
+    message: error instanceof Error ? error.message : String(error || 'failed'),
+    timeout: error?.name === 'AbortError',
+  }
+}
+
+async function fetchWithRetry(url, options = {}, timeoutMs = 9000, attempts = 2) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchWithTimeout(url, options, timeoutMs)
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 350 * attempt))
+    }
+  }
+  throw lastError
+}
 function logLine(message) {
   appendFileSync(logFile, `[${new Date().toLocaleString()}] ${message}\n`, 'utf8')
 }
@@ -366,11 +440,15 @@ function stripHtml(text) {
 function normalizeSearchUrl(raw) {
   try {
     const url = new URL(raw, 'https://duckduckgo.com')
-    const redirected = url.searchParams.get('uddg')
+    const redirected = url.searchParams.get('uddg') || url.searchParams.get('url') || url.searchParams.get('u')
     return redirected ? decodeURIComponent(redirected) : url.href
   } catch {
     return ''
   }
+}
+
+function excerptFromHtml(html, limit = 700) {
+  return stripHtml(html).slice(0, limit)
 }
 
 function siteName(url) {
@@ -389,66 +467,242 @@ function faviconFor(url) {
   }
 }
 
-async function fetchPageText(url) {
-  const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 AI Talking Local' }, redirect: 'follow' })
-  const type = response.headers.get('content-type') || ''
-  if (!response.ok || !type.includes('text/html')) return null
-  const html = await response.text()
-  const title = stripHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || siteName(url))
-  const article = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1]
-  const main = html.match(/<main[^>]*>([\s\S]*?)<\/main>/i)?.[1]
-  const text = stripHtml(article || main || html).slice(0, 5000)
-  return text ? { title, url, favicon: faviconFor(url), text } : null
+async function fetchPageText(url, runId = '', query = '') {
+  const started = performance.now()
+  const logId = pushSearchDiagnostic({ stage: 'page_fetch', runId, query, finalUrl: url, message: 'start' })
+  try {
+    const response = await fetchWithRetry(url, { headers: browserHeaders, redirect: 'follow' }, 7000, 2)
+    const type = response.headers.get('content-type') || ''
+    const html = await response.text()
+    const title = stripHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || siteName(url))
+    const article = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1]
+    const main = html.match(/<main[^>]*>([\s\S]*?)<\/main>/i)?.[1]
+    const text = response.ok && type.includes('text/html') ? stripHtml(article || main || html).slice(0, 5000) : ''
+    updateSearchDiagnostic(logId, {
+      httpStatus: response.status,
+      finalUrl: response.url,
+      contentType: type,
+      httpDate: response.headers.get('date') || '',
+      elapsedMs: Math.round(performance.now() - started),
+      responsePreview: html.slice(0, 300),
+      parsedCount: text ? 1 : 0,
+      message: text ? 'ok' : 'no readable html text',
+    })
+    return text ? { title, url, favicon: faviconFor(url), text } : null
+  } catch (error) {
+    const info = errorInfo(error)
+    updateSearchDiagnostic(logId, {
+      elapsedMs: Math.round(performance.now() - started),
+      timeout: info.timeout,
+      errorCode: info.code,
+      errorMessage: info.message,
+      message: 'failed',
+    })
+    throw error
+  }
 }
 
-async function runWebSearch(query) {
-  const response = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { headers: { 'User-Agent': 'Mozilla/5.0 AI Talking Local' } })
-  if (!response.ok) throw new Error(`search failed: ${response.status}`)
-  const html = await response.text()
-  const links = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)].map((match) => ({ url: normalizeSearchUrl(match[1]), title: stripHtml(match[2]) })).filter((item) => item.url.startsWith('http')).slice(0, 4)
+function uniqueLinks(items) {
+  const seen = new Set()
+  const unique = []
+  for (const item of items) {
+    if (!item.url || !item.url.startsWith('http') || seen.has(item.url)) continue
+    const title = item.title || siteName(item.url)
+    const snippet = item.snippet || ''
+    if (!title && !snippet) continue
+    seen.add(item.url)
+    unique.push({ ...item, title, snippet })
+  }
+  return unique
+}
+
+function parseDuckDuckGoResults(html) {
+  const links = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)]
+    .map((match) => ({ url: normalizeSearchUrl(match[1]), title: stripHtml(match[2]) }))
+  const liteLinks = [...html.matchAll(/<a[^>]+class="result-link"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)]
+    .map((match) => ({ url: normalizeSearchUrl(match[1]), title: stripHtml(match[2]) }))
+  return uniqueLinks([...links, ...liteLinks])
+}
+
+function parseBingResults(html) {
+  const links = [...html.matchAll(/<li class="b_algo"[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)(?=<li class="b_algo"|<\/ol>|$)/g)]
+    .map((match) => ({ url: normalizeSearchUrl(match[1]), title: stripHtml(match[2]), snippet: excerptFromHtml(match[3]) }))
+  return uniqueLinks(links)
+}
+
+function parseBaiduResults(html) {
+  const links = [...html.matchAll(/<div[^>]+class="[^"]*(?:result|c-container)[^"]*"[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)(?=<div[^>]+class="[^"]*(?:result|c-container)|$)/g)]
+    .map((match) => ({ url: normalizeSearchUrl(match[1]), title: stripHtml(match[2]), snippet: excerptFromHtml(match[3]) }))
+  return uniqueLinks(links)
+}
+
+function parseSogouResults(html) {
+  const links = [...html.matchAll(/<(?:div|li)[^>]+class="[^"]*(?:vrwrap|rb|result)[^"]*"[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)(?=<(?:div|li)[^>]+class="[^"]*(?:vrwrap|rb|result)|$)/g)]
+    .map((match) => ({ url: normalizeSearchUrl(match[1]), title: stripHtml(match[2]), snippet: excerptFromHtml(match[3]) }))
+  return uniqueLinks(links)
+}
+
+async function fetchSearchProvider(provider, query, runId) {
+  let lastError = null
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const started = performance.now()
+    const logId = pushSearchDiagnostic({ stage: 'search_provider', runId, query, provider: provider.name, attempt, finalUrl: provider.url, message: 'start' })
+    try {
+      const response = await fetchWithTimeout(provider.url, { headers: browserHeaders, redirect: 'follow' }, 9000)
+      const elapsedMs = Math.round(performance.now() - started)
+      const text = await response.text()
+      const links = response.ok ? provider.parse(text).slice(0, 4) : []
+      updateSearchDiagnostic(logId, {
+        httpStatus: response.status,
+        finalUrl: response.url,
+        contentType: response.headers.get('content-type') || '',
+        httpDate: response.headers.get('date') || '',
+        elapsedMs,
+        timeout: false,
+        errorCode: '',
+        errorMessage: '',
+        responsePreview: text.slice(0, 300),
+        parsedCount: links.length,
+        message: response.ok && links.length ? 'ok' : response.ok ? 'parsed 0 results' : 'http error',
+      })
+      if (response.ok && links.length) return { links, provider: provider.name, httpDate: response.headers.get('date') || '' }
+      lastError = new Error(response.ok ? provider.name + ': empty' : provider.name + ' ' + response.status)
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350 * attempt))
+    } catch (error) {
+      const info = errorInfo(error)
+      lastError = error
+      updateSearchDiagnostic(logId, {
+        elapsedMs: Math.round(performance.now() - started),
+        timeout: info.timeout,
+        errorCode: info.code,
+        errorMessage: info.message,
+        message: 'failed',
+      })
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350 * attempt))
+    }
+  }
+  throw lastError || new Error(provider.name + ': failed')
+}
+async function searchResultLinks(query, runId = createSearchRunId()) {
+  const encoded = encodeURIComponent(query)
+  const providers = [
+    { name: 'sogou', url: 'https://www.sogou.com/web?query=' + encoded, parse: parseSogouResults },
+    { name: 'baidu', url: 'https://www.baidu.com/s?wd=' + encoded, parse: parseBaiduResults },
+    { name: 'bing-cn', url: 'https://cn.bing.com/search?q=' + encoded, parse: parseBingResults },
+    { name: 'bing', url: 'https://www.bing.com/search?q=' + encoded, parse: parseBingResults },
+    { name: 'duckduckgo-html', url: 'https://duckduckgo.com/html/?q=' + encoded, parse: parseDuckDuckGoResults },
+    { name: 'duckduckgo-lite', url: 'https://lite.duckduckgo.com/lite/?q=' + encoded, parse: parseDuckDuckGoResults },
+  ]
+  const errors = []
+  for (const provider of providers) {
+    try {
+      const result = await fetchSearchProvider(provider, query, runId)
+      updateSearchDiagnostics(runId, { finalProvider: result.provider })
+      logLine('WEB_SEARCH_PROVIDER ' + result.provider + ' links=' + result.links.length + ' httpDate=' + (result.httpDate || ''))
+      return result
+    } catch (error) {
+      errors.push(provider.name + ': ' + (error instanceof Error ? error.message : 'failed'))
+    }
+  }
+  updateSearchDiagnostics(runId, { finalProvider: 'none' })
+  throw new Error(errors.join('; '))
+}
+
+async function runWebSearch(query, runId = createSearchRunId()) {
+  const started = performance.now()
+  const logId = pushSearchDiagnostic({ stage: 'runWebSearch', runId, query, message: 'start' })
+  let searchResult
+  try {
+    searchResult = await searchResultLinks(query, runId)
+  } catch (error) {
+    const info = errorInfo(error)
+    updateSearchDiagnostic(logId, { elapsedMs: Math.round(performance.now() - started), timeout: info.timeout, errorCode: info.code, errorMessage: info.message, message: 'failed' })
+    throw error
+  }
+  const links = searchResult.links
   const sources = []
   for (const item of links) {
     try {
-      const page = await fetchPageText(item.url)
-      if (page) sources.push({ ...page, title: page.title || item.title || siteName(item.url) })
+      const page = await fetchPageText(item.url, runId, query)
+      if (page) {
+        sources.push({ ...page, title: page.title || item.title || siteName(item.url) })
+        continue
+      }
     } catch (error) {
-      logLine(`FETCH_SOURCE_ERROR url=${item.url} error=${error instanceof Error ? error.message : 'failed'}`)
+      logLine('FETCH_SOURCE_ERROR url=' + item.url + ' error=' + (error instanceof Error ? error.message : 'failed'))
+    }
+    if (item.snippet) {
+      sources.push({ title: item.title || siteName(item.url), url: item.url, favicon: faviconFor(item.url), text: item.snippet })
     }
   }
-  return { query, sources }
+  if (!sources.length) {
+    sources.push(...links.filter((item) => item.snippet).map((item) => ({ title: item.title || siteName(item.url), url: item.url, favicon: faviconFor(item.url), text: item.snippet })))
+  }
+  updateSearchDiagnostic(logId, { elapsedMs: Math.round(performance.now() - started), parsedCount: sources.length, finalProvider: searchResult.provider, httpDate: searchResult.httpDate || '', message: 'ok' })
+  return { query, sources, provider: searchResult.provider, httpDate: searchResult.httpDate || '' }
 }
 
-async function maybeApplyWebSearch({ res, baseUrl, headers, model, messages, options, settings }) {
+async function maybeApplyWebSearch({ res, baseUrl, headers, model, messages, options, settings, runId }) {
   if (!options?.webSearch) return messages
-  const first = await requestUpstream({ baseUrl, headers, model, messages, options, stream: false, settings, tools: [webSearchTool], forceTool: true })
+  const plannerStarted = performance.now()
+  const plannerLogId = pushSearchDiagnostic({ stage: 'planner', runId, query: messages.at(-1)?.content || '', provider: settings?.providerName || '', finalUrl: chatEndpoint(baseUrl), message: 'start' })
+  let first
+  try {
+    first = await requestUpstream({ baseUrl, headers, model, messages, options, stream: false, settings, tools: [webSearchTool], forceTool: true })
+    updateSearchDiagnostic(plannerLogId, { httpStatus: first.status, finalUrl: first.url || chatEndpoint(baseUrl), contentType: first.headers.get('content-type') || '', httpDate: first.headers.get('date') || '', elapsedMs: Math.round(performance.now() - plannerStarted), message: first.ok ? 'ok' : 'http error' })
+  } catch (error) {
+    const info = errorInfo(error)
+    updateSearchDiagnostic(plannerLogId, { elapsedMs: Math.round(performance.now() - plannerStarted), timeout: info.timeout, errorCode: info.code, errorMessage: info.message, message: 'failed' })
+    throw error
+  }
   if (!first.ok) {
     const errorText = await first.text()
     logLine(`WEB_TOOL_PLAN_ERROR status=${first.status} body=${errorText.slice(0, 500)}`)
     return [{ role: 'system', content: `联网搜索规划失败：${errorText.slice(0, 300)}` }, ...messages]
   }
-  const json = await first.json()
+  let json
+  try {
+    json = await first.json()
+  } catch (error) {
+    const info = errorInfo(error)
+    updateSearchDiagnostic(plannerLogId, { errorCode: info.code, errorMessage: info.message, message: 'failed to parse planner response' })
+    throw error
+  }
   const assistant = json.choices?.[0]?.message
   const toolCalls = assistant?.tool_calls || []
+  updateSearchDiagnostic(plannerLogId, { parsedCount: toolCalls.length, responsePreview: JSON.stringify(json).slice(0, 300), message: toolCalls.length ? 'tool calls ready' : 'no tool call' })
   if (!toolCalls.length) return messages
   const nextMessages = [...buildMessages(messages, options, model, settings, baseUrl), assistant]
+  const publicSources = []
   for (const call of toolCalls) {
     if (call.function?.name !== 'web_search') continue
     let args = {}
     try { args = JSON.parse(call.function.arguments || '{}') } catch { args = {} }
     const query = String(args.query || messages.at(-1)?.content || '')
+    pushSearchDiagnostic({ stage: 'tool_call', runId, query, provider: call.function?.name || '', message: 'start', responsePreview: call.function?.arguments || '' })
     let result
     try {
-      result = await runWebSearch(query)
-      const publicSources = result.sources.map((source, index) => ({ id: index + 1, title: source.title, url: source.url, favicon: source.favicon }))
+      result = await runWebSearch(query, runId)
+      const sourceOffset = publicSources.length
+      result.sources = result.sources.map((source, index) => ({ ...source, id: sourceOffset + index + 1 }))
+      publicSources.push(...result.sources.map((source) => ({ id: source.id, title: source.title, url: source.url, favicon: source.favicon })))
       writeEvent(res, { type: 'sources', sources: publicSources })
-      logLine(`WEB_SEARCH query=${query} sources=${publicSources.length}`)
+      logLine('WEB_SEARCH query=' + query + ' sources=' + result.sources.length + ' totalSources=' + publicSources.length)
     } catch (error) {
       result = { query, sources: [], error: error instanceof Error ? error.message : 'search failed' }
-      logLine(`WEB_SEARCH_ERROR query=${query} error=${result.error}`)
+      pushSearchDiagnostic({ stage: 'runWebSearch', runId, query, errorCode: errorInfo(error).code, errorMessage: result.error, message: 'failed' })
+      logLine('WEB_SEARCH_ERROR query=' + query + ' error=' + result.error)
     }
     nextMessages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) })
   }
-  nextMessages.push({ role: 'system', content: '你必须只依据 web_search 工具返回的 sources.text 回答。不要输出 Markdown 链接，不要在底部单独列来源。凡是来自某个来源的句子后面插入对应标记，例如【source:1】。资料不足就说资料不足。' })
+  const trustedDates = nextMessages
+    .filter((message) => message.role === 'tool')
+    .map((message) => {
+      try { return JSON.parse(message.content || '{}')?.httpDate || '' } catch { return '' }
+    })
+    .filter(Boolean)
+  const timeBasis = trustedDates.at(-1) || ''
+  nextMessages.push({ role: 'system', content: '\u4f60\u5fc5\u987b\u53ea\u4f9d\u636e web_search \u5de5\u5177\u8fd4\u56de\u7684 sources.text \u56de\u7b54\u3002\u4e0d\u8981\u8f93\u51fa Markdown \u94fe\u63a5\uff0c\u4e0d\u8981\u5728\u5e95\u90e8\u5355\u72ec\u5217\u6765\u6e90\u3002\u51e1\u662f\u6765\u81ea\u67d0\u4e2a\u6765\u6e90\u7684\u53e5\u5b50\u540e\u9762\u63d2\u5165\u5bf9\u5e94\u6807\u8bb0\uff0c\u4f8b\u5982\u3010source:1\u3011\u3002\u8d44\u6599\u4e0d\u8db3\u5c31\u8bf4\u8d44\u6599\u4e0d\u8db3\u3002\u5224\u65ad\u5f53\u524d\u65f6\u95f4\u6216\u641c\u7d22\u7ed3\u679c\u65b0\u9c9c\u5ea6\u65f6\uff0c\u4f18\u5148\u4f7f\u7528\u53ef\u4fe1\u7f51\u7edc\u54cd\u5e94\u7684 HTTP Date header\uff1a' + (timeBasis || '\u672a\u53d6\u5f97\u53ef\u4fe1\u7f51\u7edc\u65f6\u95f4\uff1b\u53ea\u80fd\u628a\u672c\u673a\u65f6\u95f4\u4f5c\u4e3a fallback\uff0c\u4e14\u9700\u8981\u8bf4\u660e\u53ef\u80fd\u5b58\u5728\u504f\u5dee\u3002') + '\u3002\u4e0d\u8981\u51ed\u6a21\u578b\u8bb0\u5fc6\u5224\u65ad\u5f53\u524d\u65e5\u671f\u3002' })
   return nextMessages
 }
 
@@ -639,11 +893,27 @@ async function handleChat(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*' })
     const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }
     if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`
-    const finalMessages = await maybeApplyWebSearch({ res, baseUrl, headers, model, messages, options, settings })
-    let upstream = await requestUpstream({ baseUrl, headers, model, messages: finalMessages, options: { ...options, webSearch: false }, includeUsage: true, stream: true, settings })
-    if (!upstream.ok && [400, 404, 422].includes(upstream.status)) upstream = await requestUpstream({ baseUrl, headers, model, messages: finalMessages, options: { ...options, webSearch: false }, includeUsage: false, stream: true, settings })
+    const searchRunId = options?.webSearch ? createSearchRunId() : ''
+    if (options?.webSearch) {
+      beginSearchDiagnostics(searchRunId)
+      pushSearchDiagnostic({ stage: 'webSearch_request', runId: searchRunId, query: messages.at(-1)?.content || '', provider: settings?.providerName || '', finalUrl: chatEndpoint(baseUrl), message: 'api chat received' })
+    }
+    const finalMessages = await maybeApplyWebSearch({ res, baseUrl, headers, model, messages, options, settings, runId: searchRunId })
+    const finalStarted = performance.now()
+    const finalLogId = options?.webSearch ? pushSearchDiagnostic({ stage: 'final_model', runId: searchRunId, query: messages.at(-1)?.content || '', provider: settings?.providerName || '', finalUrl: chatEndpoint(baseUrl), message: 'start' }) : 0
+    let upstream
+    try {
+      upstream = await requestUpstream({ baseUrl, headers, model, messages: finalMessages, options: { ...options, webSearch: false }, includeUsage: true, stream: true, settings })
+      if (!upstream.ok && [400, 404, 422].includes(upstream.status)) upstream = await requestUpstream({ baseUrl, headers, model, messages: finalMessages, options: { ...options, webSearch: false }, includeUsage: false, stream: true, settings })
+      if (options?.webSearch) updateSearchDiagnostic(finalLogId, { httpStatus: upstream.status, finalUrl: upstream.url || chatEndpoint(baseUrl), contentType: upstream.headers.get('content-type') || '', httpDate: upstream.headers.get('date') || '', elapsedMs: Math.round(performance.now() - finalStarted), message: upstream.ok ? 'ok' : 'http error' })
+    } catch (error) {
+      const info = errorInfo(error)
+      if (options?.webSearch) updateSearchDiagnostic(finalLogId, { elapsedMs: Math.round(performance.now() - finalStarted), timeout: info.timeout, errorCode: info.code, errorMessage: info.message, message: 'failed' })
+      throw error
+    }
     if (!upstream.ok) {
       const errorText = await upstream.text()
+      if (options?.webSearch) updateSearchDiagnostic(finalLogId, { responsePreview: errorText.slice(0, 300), errorMessage: errorText || 'upstream error', message: 'failed' })
       logLine(`UPSTREAM_ERROR status=${upstream.status} body=${errorText.slice(0, 500)}`)
       writeEvent(res, { type: 'error', message: errorText || `上游接口错误：${upstream.status}` })
       writeEvent(res, { type: 'done' })
@@ -708,8 +978,21 @@ createServer((req, res) => {
     sendJson(res, 200, { ok: true, time: new Date().toISOString() })
     return
   }
+  if (req.method === 'GET' && pathname === '/api/search-logs') {
+    sendJson(res, 200, { logs: searchDiagnostics.slice().reverse() })
+    return
+  }
+  if (req.method === 'DELETE' && pathname === '/api/search-logs') {
+    searchDiagnostics.length = 0
+    sendJson(res, 200, { ok: true })
+    return
+  }
   if (req.method === 'POST' && pathname === '/api/chat') {
     void handleChat(req, res)
+    return
+  }
+  if (pathname.startsWith('/api/')) {
+    sendJson(res, 404, { error: 'API route not found', path: pathname })
     return
   }
   if (req.method === 'GET') {

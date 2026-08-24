@@ -4234,3 +4234,140 @@
   -webkit-backdrop-filter: blur(var(--bubble-glass-blur)) !important;
 }
 
+
+/* Search source tray. */
+.reasoning .reasoning-text {
+  max-height: 240px;
+  overflow: auto;
+  padding: 0 12px 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.reasoning .reasoning-sources {
+  display: flex;
+  max-height: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: visible;
+  padding: 0 10px 12px;
+  line-height: 1;
+  white-space: normal;
+}
+
+.reasoning .reasoning-sources .citation-chip {
+  margin: 0;
+}
+
+/* Web search diagnostic log panel. */
+.search-log-panel .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.search-log-list {
+  display: grid;
+  gap: 10px;
+}
+
+.search-log-entry {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+}
+
+.search-log-entry summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-log-entry summary span {
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.search-log-entry dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.search-log-entry dl div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.search-log-entry dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.search-log-entry dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.search-log-entry pre {
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Collapsed sidebar chat alignment: message content follows composer edges. */
+.shell.sidebar-collapsed .chat-pane {
+  --chat-content-width: min(820px, calc(100% - 40px));
+}
+
+.shell.sidebar-collapsed .chat-pane .messages {
+  padding-left: 20px !important;
+  padding-right: 20px !important;
+}
+
+.shell.sidebar-collapsed .message {
+  width: var(--chat-content-width) !important;
+  max-width: var(--chat-content-width) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.shell.sidebar-collapsed .message.assistant {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.shell.sidebar-collapsed .message.assistant .avatar {
+  display: none !important;
+}
+
+.shell.sidebar-collapsed .message.assistant .message-main,
+.shell.sidebar-collapsed .message.assistant .bubble,
+.shell.sidebar-collapsed .message.assistant .reasoning,
+.shell.sidebar-collapsed .message.assistant .meta-line {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.shell.sidebar-collapsed .message.user {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.shell.sidebar-collapsed .message.user .avatar {
+  display: none !important;
+}
+
+.shell.sidebar-collapsed .message.user .message-main {
+  width: 100% !important;
+}
