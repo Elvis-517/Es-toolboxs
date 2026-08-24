@@ -649,6 +649,7 @@ function App() {
   const userMessageRefs = useRef<Map<string, HTMLElement>>(new Map())
   const autoFollowRef = useRef(true)
   const programmaticScrollRef = useRef(false)
+  const followScrollFrameRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const backgroundInputRef = useRef<HTMLInputElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -720,6 +721,12 @@ function App() {
     resizeComposer()
   }, [draft, resizeComposer, settings.theme.fontSize])
 
+  const isNearBottom = useCallback((threshold = 88) => {
+    const container = messagesRef.current
+    if (!container) return true
+    return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold
+  }, [])
+
   const setAutoFollowMode = useCallback((value: boolean) => {
     autoFollowRef.current = value
     setAutoFollow(value)
@@ -727,13 +734,31 @@ function App() {
   }, [])
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const container = messagesRef.current
+    if (!container) return
     programmaticScrollRef.current = true
-    bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
+    container.scrollTo({ top: container.scrollHeight, behavior })
     setAutoFollowMode(true)
     window.setTimeout(() => {
       programmaticScrollRef.current = false
-    }, 180)
+    }, behavior === 'smooth' ? 220 : 60)
   }, [setAutoFollowMode])
+
+  const followLatestNow = useCallback(() => {
+    if (!autoFollowRef.current) return
+    if (followScrollFrameRef.current !== null) return
+    followScrollFrameRef.current = window.requestAnimationFrame(() => {
+      followScrollFrameRef.current = null
+      if (!autoFollowRef.current) return
+      const container = messagesRef.current
+      if (!container) return
+      programmaticScrollRef.current = true
+      container.scrollTop = container.scrollHeight
+      window.setTimeout(() => {
+        programmaticScrollRef.current = false
+      }, 0)
+    })
+  }, [])
 
   const updateActiveUserFromScroll = useCallback(() => {
     const container = messagesRef.current
@@ -755,13 +780,22 @@ function App() {
     if (!container) return
     updateActiveUserFromScroll()
     if (programmaticScrollRef.current) return
-    const distance = container.scrollHeight - container.scrollTop - container.clientHeight
-    setAutoFollowMode(distance < 96)
-  }, [setAutoFollowMode, updateActiveUserFromScroll])
+    setAutoFollowMode(isNearBottom(88))
+  }, [isNearBottom, setAutoFollowMode, updateActiveUserFromScroll])
 
   useEffect(() => {
-    if (autoFollowRef.current) scrollToLatest('auto')
-  }, [activeConversation?.messages.length, lastMessageContent, isSending, scrollToLatest])
+    if (view !== 'chat') return
+    setAutoFollowMode(true)
+    window.requestAnimationFrame(() => scrollToLatest('auto'))
+  }, [activeConversation?.id, scrollToLatest, setAutoFollowMode, view])
+
+  useEffect(() => {
+    if (view === 'chat') followLatestNow()
+  }, [activeConversation?.messages.length, lastMessageContent, followLatestNow, view])
+
+  useEffect(() => () => {
+    if (followScrollFrameRef.current !== null) window.cancelAnimationFrame(followScrollFrameRef.current)
+  }, [])
 
   useEffect(() => {
     const container = messagesRef.current
@@ -996,7 +1030,7 @@ function App() {
       updatedAt: nowIso(),
     }))
     setAutoFollowMode(true)
-    window.setTimeout(() => scrollToLatest('auto'), 0)
+    followLatestNow()
     setIsSending(true)
 
     try {
@@ -1096,7 +1130,7 @@ function App() {
       updatedAt: nowIso(),
     }))
     setAutoFollowMode(true)
-    window.setTimeout(() => scrollToLatest('auto'), 0)
+    followLatestNow()
     setIsSending(true)
     try {
       const controller = new AbortController()
