@@ -18,6 +18,8 @@ type Citation = {
   title: string
   url: string
   favicon: string
+  query?: string
+  sourceType?: 'fetched_page' | 'fetched_pdf' | 'pdf_url' | 'snippet_fallback' | 'network_time' | 'local_time_fallback'
 }
 
 type TokenUsage = {
@@ -25,6 +27,33 @@ type TokenUsage = {
   completion: number
   total: number
   source?: 'api' | 'estimate'
+}
+
+type DocumentChunk = {
+  index: number
+  text: string
+  charCount: number
+  tokenEstimate: number
+}
+
+type DocumentUsage = {
+  used: boolean
+  charCount: number
+  tokenEstimate: number
+  documentCount: number
+}
+
+type DocumentAttachment = {
+  id: string
+  name: string
+  type: 'txt' | 'md' | 'pdf' | 'docx' | 'unknown'
+  mimeType: string
+  size: number
+  status: 'parsing' | 'ready' | 'error'
+  charCount: number
+  tokenEstimate: number
+  chunks?: DocumentChunk[]
+  error?: string
 }
 
 type MessageVariant = {
@@ -35,6 +64,8 @@ type MessageVariant = {
   reasoning?: string
   tokenUsage?: TokenUsage
   citations?: Citation[]
+  documentUsage?: DocumentUsage
+  documentAttachments?: DocumentAttachment[]
   deepThink?: boolean
   webSearch?: boolean
   tail?: Message[]
@@ -50,6 +81,8 @@ type Message = {
   reasoning?: string
   tokenUsage?: TokenUsage
   citations?: Citation[]
+  documentUsage?: DocumentUsage
+  documentAttachments?: DocumentAttachment[]
   deepThink?: boolean
   webSearch?: boolean
   branchIndex?: number
@@ -64,6 +97,7 @@ type Conversation = {
   updatedAt: string
   responseLengthMode?: ResponseLengthMode
   targetChars?: number
+  documentAttachments?: DocumentAttachment[]
 }
 
 type McpServer = {
@@ -129,9 +163,10 @@ type Backup = {
 }
 
 type StreamEvent = {
-  type: 'content' | 'reasoning' | 'usage' | 'sources' | 'done' | 'error'
+  type: 'content' | 'reasoning' | 'usage' | 'document_usage' | 'sources' | 'done' | 'error'
   value?: string
   usage?: TokenUsage
+  documentUsage?: DocumentUsage
   sources?: Citation[]
   message?: string
 }
@@ -281,11 +316,11 @@ function nowIso() {
 }
 
 function createConversation(): Conversation {
-  return { id: createId(), title: '\u65b0\u5bf9\u8bdd', messages: [], updatedAt: nowIso(), responseLengthMode: 'auto', targetChars: 3000 }
+  return { id: createId(), title: '\u65b0\u5bf9\u8bdd', messages: [], updatedAt: nowIso(), responseLengthMode: 'auto', targetChars: 3000, documentAttachments: [] }
 }
 
 function normalizeConversation(conversation: Conversation): Conversation {
-  return { responseLengthMode: 'auto', targetChars: 3000, ...conversation }
+  return { responseLengthMode: 'auto', targetChars: 3000, documentAttachments: [], ...conversation }
 }
 
 function normalizeSettings(settings?: Partial<Settings>): Settings {
@@ -407,6 +442,50 @@ function syncUserBranch(message: Message, tail: Message[]): Message {
 }
 
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+
+function documentTypeFromFile(file: File): DocumentAttachment['type'] {
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.txt')) return 'txt'
+  if (name.endsWith('.md') || name.endsWith('.markdown')) return 'md'
+  if (name.endsWith('.pdf')) return 'pdf'
+  if (name.endsWith('.docx')) return 'docx'
+  return 'unknown'
+}
+
+function documentTypeLabel(type: DocumentAttachment['type']) {
+  return type === 'unknown' ? 'FILE' : type.toUpperCase()
+}
+
+async function parseDocumentUpload(file: File) {
+  const endpoints = ['/api/documents/parse', 'http://localhost:8787/api/documents/parse']
+  let lastError: Error | null = null
+  for (const endpoint of endpoints) {
+    try {
+      const data = new FormData()
+      data.append('file', file)
+      const response = await fetch(endpoint, { method: 'POST', body: data })
+      const contentType = response.headers.get('content-type') || ''
+      const text = await response.text()
+      if (!contentType.includes('application/json')) {
+        lastError = new Error('\u6587\u6863\u89e3\u6790 API \u672a\u8fd4\u56de JSON\uff1a' + contentType)
+        continue
+      }
+      const parsed = JSON.parse(text)
+      if (!response.ok || !parsed.ok) throw new Error(parsed.error || '\u6587\u6863\u89e3\u6790\u5931\u8d25\u3002')
+      return parsed
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('\u6587\u6863\u89e3\u6790\u5931\u8d25\u3002')
+    }
+  }
+  throw lastError || new Error('\u6587\u6863\u89e3\u6790\u5931\u8d25\u3002')
+}
+
 function estimateTokens(text: string) {
   const normalized = text.trim()
   if (!normalized) return 0
@@ -441,7 +520,7 @@ function sourceLabel(source: Citation) {
 
 function CitationChip({ source }: { source: Citation }) {
   return (
-    <a className="citation-chip" href={source.url} target="_blank" rel="noreferrer" title={`${source.title}\n${source.url}`}>
+    <a className="citation-chip" href={source.url} target="_blank" rel="noreferrer" title={`${source.query ? '搜索：' + source.query + '\n' : ''}${source.sourceType ? '类型：' + source.sourceType + '\n' : ''}${source.title}\n${source.url}`}>
       {source.favicon ? <img src={source.favicon} alt="" onError={(event) => { event.currentTarget.style.display = 'none' }} /> : <span>•</span>}
       <b>{sourceLabel(source)}</b>
     </a>
@@ -644,6 +723,7 @@ function App() {
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState('')
   const [searchLogs, setSearchLogs] = useState<SearchDiagnosticLog[]>([])
+  const [documentDragActive, setDocumentDragActive] = useState(false)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const userMessageRefs = useRef<Map<string, HTMLElement>>(new Map())
@@ -651,6 +731,7 @@ function App() {
   const programmaticScrollRef = useRef(false)
   const followScrollFrameRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const documentInputRef = useRef<HTMLInputElement | null>(null)
   const backgroundInputRef = useRef<HTMLInputElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -658,8 +739,12 @@ function App() {
   const activeConversation = conversations.find((item) => item.id === activeId) || conversations[0]
   const conversationGroups = groupConversationsByTime(conversations)
   const lastMessageContent = activeConversation?.messages.at(-1)?.content || ''
+  const lastMessageReasoning = activeConversation?.messages.at(-1)?.reasoning || ''
   const userNavigatorMessages = useMemo(() => activeConversation?.messages.filter((message) => message.role === 'user') || [], [activeConversation?.messages])
   const visibleSearchLogs = searchLogs.slice(0, 8)
+  const conversationDocuments = activeConversation?.documentAttachments || []
+  const readyConversationDocuments = conversationDocuments.filter((attachment) => attachment.status === 'ready' && attachment.chunks?.length)
+  const hasParsingDocuments = conversationDocuments.some((attachment) => attachment.status === 'parsing')
   const setTheme = useCallback((patch: Partial<ThemeSettings>) => {
     setSettings((current) => ({ ...current, theme: { ...current.theme, ...patch } }))
   }, [])
@@ -791,7 +876,7 @@ function App() {
 
   useEffect(() => {
     if (view === 'chat') followLatestNow()
-  }, [activeConversation?.messages.length, lastMessageContent, followLatestNow, view])
+  }, [activeConversation?.messages.length, lastMessageContent, lastMessageReasoning, followLatestNow, view])
 
   useEffect(() => () => {
     if (followScrollFrameRef.current !== null) window.cancelAnimationFrame(followScrollFrameRef.current)
@@ -974,6 +1059,108 @@ function App() {
     setSettings((current) => ({ ...current, mcpServers: current.mcpServers.filter((server) => server.id !== id) }))
   }
 
+  function updateConversationDocument(conversationId: string, attachmentId: string, patch: Partial<DocumentAttachment>) {
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      documentAttachments: (conversation.documentAttachments || []).map((attachment) => (attachment.id === attachmentId ? { ...attachment, ...patch } : attachment)),
+      updatedAt: nowIso(),
+    }))
+  }
+
+  async function uploadDocument(file: File) {
+    if (!activeConversation) return
+    const conversationId = activeConversation.id
+    const attachmentId = createId()
+    const pending: DocumentAttachment = {
+      id: attachmentId,
+      name: file.name,
+      type: documentTypeFromFile(file),
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      status: 'parsing',
+      charCount: 0,
+      tokenEstimate: 0,
+    }
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      documentAttachments: [...(conversation.documentAttachments || []), pending],
+      updatedAt: nowIso(),
+    }))
+    try {
+      const parsed = await parseDocumentUpload(file)
+      updateConversationDocument(conversationId, attachmentId, {
+        name: parsed.name || file.name,
+        type: parsed.type || documentTypeFromFile(file),
+        mimeType: parsed.mimeType || file.type || '',
+        size: parsed.size || file.size,
+        status: 'ready',
+        charCount: parsed.charCount || 0,
+        tokenEstimate: parsed.tokenEstimate || 0,
+        chunks: parsed.chunks || [],
+        error: '',
+      })
+    } catch (error) {
+      updateConversationDocument(conversationId, attachmentId, {
+        status: 'error',
+        error: error instanceof Error ? error.message : '\u6587\u6863\u89e3\u6790\u5931\u8d25\u3002',
+      })
+    } finally {
+      if (documentInputRef.current) documentInputRef.current.value = ''
+    }
+  }
+
+  function uploadDocuments(files: FileList | File[]) {
+    Array.from(files).forEach((file) => {
+      void uploadDocument(file)
+    })
+  }
+
+  function hasDraggedFiles(event: React.DragEvent) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files')
+  }
+
+  function handleDocumentDragEnter(event: React.DragEvent<HTMLFormElement>) {
+    if (!hasDraggedFiles(event)) return
+    event.preventDefault()
+    setDocumentDragActive(true)
+  }
+
+  function handleDocumentDragOver(event: React.DragEvent<HTMLFormElement>) {
+    if (!hasDraggedFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDocumentDragActive(true)
+  }
+
+  function handleDocumentDragLeave(event: React.DragEvent<HTMLFormElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDocumentDragActive(false)
+  }
+
+  function handleDocumentDrop(event: React.DragEvent<HTMLFormElement>) {
+    if (!hasDraggedFiles(event)) return
+    event.preventDefault()
+    setDocumentDragActive(false)
+    if (event.dataTransfer.files.length) uploadDocuments(event.dataTransfer.files)
+  }
+
+  function clearPendingDocuments(conversationId: string, sentIds: string[]) {
+    if (!sentIds.length) return
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      documentAttachments: (conversation.documentAttachments || []).filter((attachment) => !sentIds.includes(attachment.id)),
+      updatedAt: nowIso(),
+    }))
+  }
+
+  function removeDocument(attachmentId: string) {
+    if (!activeConversation) return
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      documentAttachments: (conversation.documentAttachments || []).filter((attachment) => attachment.id !== attachmentId),
+      updatedAt: nowIso(),
+    }))
+  }
+
   function stopGeneration() {
     abortControllerRef.current?.abort()
   }
@@ -986,6 +1173,7 @@ function App() {
         if (event.type === 'content') return { ...message, content: `${message.content}${event.value || ''}` }
         if (event.type === 'reasoning') return { ...message, reasoning: `${message.reasoning || ''}${event.value || ''}` }
         if (event.type === 'usage' && event.usage?.total) return { ...message, tokenUsage: { ...event.usage, source: 'api' } }
+        if (event.type === 'document_usage' && event.documentUsage) return { ...message, documentUsage: event.documentUsage }
         if (event.type === 'sources' && event.sources) return { ...message, citations: event.sources }
         if (event.type === 'done') {
           const completion = estimateTokens(`${message.reasoning || ''}\n${message.content}`)
@@ -1006,23 +1194,33 @@ function App() {
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
+    if (isSending) {
+      stopGeneration()
+      return
+    }
     const content = draft.trim()
-    if (!content || isSending || !activeConversation) return
+    if (!content || !activeConversation) return
+    if (hasParsingDocuments) {
+      setNotice('\u8bf7\u7b49\u6587\u6863\u8bfb\u53d6\u5b8c\u6210\u540e\u518d\u53d1\u9001\u3002')
+      return
+    }
     if (!settings.baseUrl || !settings.model) {
       setNotice('请先在设置里选择商家并填写模型。')
       setView('settings')
       return
     }
 
-    const userMessage: Message = { id: createId(), role: 'user', content, createdAt: nowIso(), deepThink, webSearch, branchIndex: 1, branchTotal: 1 }
+    const attachedDocuments = readyConversationDocuments
+    const sentDocumentIds = attachedDocuments.map((attachment) => attachment.id)
+    const userMessage: Message = { id: createId(), role: 'user', content, createdAt: nowIso(), deepThink, webSearch, documentAttachments: attachedDocuments, branchIndex: 1, branchTotal: 1 }
     const assistantMessage: Message = { id: createId(), role: 'assistant', content: '', reasoning: '', createdAt: nowIso(), deepThink, webSearch, branchIndex: 1, branchTotal: 1 }
     const conversationId = activeConversation.id
     const history = [...activeConversation.messages, userMessage]
     const messagesForApi = history.map(({ role, content: text }) => ({ role, content: text }))
     const promptTokens = estimateTokens(history.map((message) => message.content).join('\n'))
 
-    setDraft('')
     setNotice('')
+    setDraft('')
     updateConversation(conversationId, (conversation) => ({
       ...conversation,
       title: conversation.messages.length ? conversation.title : getTitleFromMessage(content),
@@ -1040,7 +1238,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ settings, messages: messagesForApi, options: buildChatOptions() }),
+        body: JSON.stringify({ settings, messages: messagesForApi, options: buildChatOptions(), documentAttachments: attachedDocuments }),
       })
 
       if (!response.ok || !response.body) {
@@ -1048,6 +1246,7 @@ function App() {
         throw new Error(errorText || `请求失败：${response.status}`)
       }
 
+      let streamHadError = false
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffered = ''
@@ -1061,11 +1260,15 @@ function App() {
           if (!line.trim()) continue
           try {
             const parsed = JSON.parse(line) as StreamEvent
+            if (parsed.type === 'error') streamHadError = true
             applyStreamEvent(parsed, conversationId, assistantMessage.id, promptTokens)
           } catch {
             continue
           }
         }
+      }
+      if (!streamHadError && !controller.signal.aborted) {
+        clearPendingDocuments(conversationId, sentDocumentIds)
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1116,7 +1319,8 @@ function App() {
     const syncedUser = syncUserBranch(currentUser, activeConversation.messages.slice(index + 1))
     const previousVariants = messageVariants(syncedUser)
     const nextBranchTotal = previousVariants.length + 1
-    const userMessage: Message = { ...syncedUser, content, createdAt: nowIso(), branchIndex: nextBranchTotal, branchTotal: nextBranchTotal, variants: previousVariants }
+    const editDocuments = readyConversationDocuments.length ? readyConversationDocuments : (syncedUser.documentAttachments || [])
+    const userMessage: Message = { ...syncedUser, content, createdAt: nowIso(), documentAttachments: editDocuments, branchIndex: nextBranchTotal, branchTotal: nextBranchTotal, variants: previousVariants }
     const assistantMessage: Message = { id: createId(), role: 'assistant', content: '', reasoning: '', createdAt: nowIso(), deepThink, webSearch, branchIndex: 1, branchTotal: 1 }
     const history = [...activeConversation.messages.slice(0, index), userMessage]
     const messagesForApi = history.map(({ role, content: text }) => ({ role, content: text }))
@@ -1139,7 +1343,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ settings, messages: messagesForApi, options: buildChatOptions() }),
+        body: JSON.stringify({ settings, messages: messagesForApi, options: buildChatOptions(), documentAttachments: editDocuments }),
       })
       if (!response.ok || !response.body) throw new Error(await response.text() || `请求失败：${response.status}`)
       const reader = response.body.getReader()
@@ -1190,6 +1394,7 @@ function App() {
     const previousVariants = messageVariants(oldAssistant)
     const nextBranchTotal = previousVariants.length + 1
     const assistantMessage: Message = { id: createId(), role: 'assistant', content: '', reasoning: '', createdAt: nowIso(), deepThink, webSearch, branchIndex: nextBranchTotal, branchTotal: nextBranchTotal, variants: previousVariants }
+    const retryDocuments = previousUser.documentAttachments || []
     const history = activeConversation.messages.slice(0, index).filter((message) => message.role !== 'assistant' || message.content.trim())
     const messagesForApi = history.map(({ role, content: text }) => ({ role, content: text }))
     const promptTokens = estimateTokens(history.map((message) => message.content).join('\n'))
@@ -1209,7 +1414,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ settings, messages: messagesForApi, options: buildChatOptions() }),
+        body: JSON.stringify({ settings, messages: messagesForApi, options: buildChatOptions(), documentAttachments: retryDocuments }),
       })
       if (!response.ok || !response.body) throw new Error(await response.text() || `请求失败：${response.status}`)
       const reader = response.body.getReader()
@@ -1383,16 +1588,23 @@ function App() {
                   ) : (
                     <div className="bubble"><RenderMarkdown content={message.content || (isSending && index === activeConversation.messages.length - 1 ? '\u751f\u6210\u4e2d...' : '')} citations={message.citations} /></div>
                   )}
+                  {message.role === 'user' && Boolean(message.documentAttachments?.length) && (
+                    <div className="message-documents">
+                      {message.documentAttachments?.map((attachment) => (
+                        <span className="document-chip compact" key={message.id + '-' + attachment.id} title={attachment.name}>{attachment.name}{' \u00b7 '}{documentTypeLabel(attachment.type)}{' \u00b7 '}{formatBytes(attachment.size)}</span>
+                      ))}
+                    </div>
+                  )}
                   {message.role === 'user' && (
                     <div className="user-actions">
                       <span>{formatTime(message.createdAt)}</span>
-                      <button type="button" aria-label="编辑" onClick={() => startEditingUserMessage(message)}>✎</button>
-                      {Boolean(message.content.trim()) && <button type="button" title="\u590d\u5236\u8fd9\u6761\u6d88\u606f" aria-label="\u590d\u5236\u8fd9\u6761\u6d88\u606f" onClick={() => copyMessageText(message)}>{'\u29c9'}</button>}
+                      <button type="button" aria-label={'\u7f16\u8f91'} onClick={() => startEditingUserMessage(message)}>{'\u270e'}</button>
+                      {Boolean(message.content.trim()) && <button type="button" title={'\u590d\u5236\u8fd9\u6761\u6d88\u606f'} aria-label={'\u590d\u5236\u8fd9\u6761\u6d88\u606f'} onClick={() => copyMessageText(message)}>{'\u29c9'}</button>}
                       {(message.branchTotal || 1) > 1 && (
                         <span className="branch-chip">
-                          <button type="button" disabled={isSending} onClick={() => switchUserBranch(message.id, -1)}>‹</button>
+                          <button type="button" disabled={isSending} onClick={() => switchUserBranch(message.id, -1)}>{'\u2039'}</button>
                           <b>{message.branchIndex || 1}/{message.branchTotal || 1}</b>
-                          <button type="button" disabled={isSending} onClick={() => switchUserBranch(message.id, 1)}>›</button>
+                          <button type="button" disabled={isSending} onClick={() => switchUserBranch(message.id, 1)}>{'\u203a'}</button>
                         </span>
                       )}
                     </div>
@@ -1401,6 +1613,7 @@ function App() {
                     <div className="meta-line">
                       <span>{message.tokenUsage ? `Input ${message.tokenUsage.prompt} tokens / Output ${message.tokenUsage.completion} tokens / Total ${message.tokenUsage.total} tokens` : 'tokens 统计中'}</span>
                       <span>时间 {message.completedAt ? formatTime(message.completedAt) : formatTime(nowIso())}</span>
+                      {message.documentUsage && <span>{'\u6587\u6863\u8bfb\u53d6\uff1a\u7ea6'} {message.documentUsage.tokenEstimate} tokens</span>}
                       {message.interrupted && <span>已中断</span>}
                       {message.completedAt && (
                         <span className="branch-chip">
@@ -1441,7 +1654,21 @@ function App() {
             </button>
           )}
 
-          <form className="composer" onSubmit={sendMessage}>
+          <form className={`composer ${documentDragActive ? 'document-drag-active' : ''}`} onSubmit={sendMessage} onDragEnter={handleDocumentDragEnter} onDragOver={handleDocumentDragOver} onDragLeave={handleDocumentDragLeave} onDrop={handleDocumentDrop}>
+            {documentDragActive && <div className="document-drop-hint">{'\u677e\u5f00\u4ee5\u4e0a\u4f20\u6587\u6863'}</div>}
+            {conversationDocuments.length > 0 && (
+              <div className="document-tray" aria-label={'\u5f53\u524d\u5bf9\u8bdd\u6587\u6863'}>
+                {conversationDocuments.map((attachment) => (
+                  <div className={'document-chip ' + attachment.status} key={attachment.id} title={attachment.error || attachment.charCount + ' \u5b57 / \u7ea6 ' + attachment.tokenEstimate + ' tokens'}>
+                    <span className="document-icon">{'\ud83d\udcc4'}</span>
+                    <span className="document-name">{attachment.name}</span>
+                    <small>{documentTypeLabel(attachment.type)}{' \u00b7 '}{formatBytes(attachment.size)}{' \u00b7 '}{attachment.status === 'parsing' ? '\u8bfb\u53d6\u4e2d' : attachment.status === 'ready' ? '\u2713 \u5df2\u8bfb\u53d6' : '\u8bfb\u53d6\u5931\u8d25'}</small>
+                    {attachment.status === 'parsing' && <i className="document-spinner" aria-hidden="true" />}
+                    <button type="button" aria-label={'\u79fb\u9664\u6587\u6863'} onClick={() => removeDocument(attachment.id)}>{'\u00d7'}</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               rows={1}
@@ -1459,6 +1686,8 @@ function App() {
               <div className="tool-group">
                 <IconButton label="深度思考" active={deepThink} disabled={isSending} onClick={() => setDeepThink((value) => !value)}>T</IconButton>
                 <IconButton label="联网搜索" active={webSearch} disabled={isSending} onClick={() => setWebSearch((value) => !value)}>⌕</IconButton>
+                <IconButton label={'\u4e0a\u4f20\u6587\u6863'} disabled={isSending} onClick={() => documentInputRef.current?.click()}>+</IconButton>
+                <input ref={documentInputRef} type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden onChange={(event) => event.target.files?.length && uploadDocuments(event.target.files)} />
                 <label className="length-control" title="auto: no fixed target; custom enables continuation guard">
                   <span>{'\u957f\u5ea6'}</span>
                   <select value={activeConversation?.responseLengthMode || 'auto'} disabled={isSending} onChange={(event) => setConversationLength({ responseLengthMode: event.target.value as ResponseLengthMode })}>
@@ -1484,7 +1713,7 @@ function App() {
                 )}
                 <IconButton label="清空输入" disabled={isSending || !draft} onClick={() => setDraft('')}>×</IconButton>
               </div>
-              <button className={`send-button ${isSending ? 'stop' : ''}`} type={isSending ? 'button' : 'submit'} disabled={!isSending && !draft.trim()} aria-label={isSending ? '停止生成' : '发送'} onClick={isSending ? stopGeneration : undefined}>{isSending ? <span className="stop-mark" /> : <span className="send-mark">↑</span>}</button>
+              <button className={`send-button ${isSending ? 'stop' : ''}`} type={isSending ? 'button' : 'submit'} disabled={!isSending && (!draft.trim() || hasParsingDocuments)} aria-label={isSending ? '停止生成' : '发送'} onClick={isSending ? stopGeneration : undefined}>{isSending ? <span className="stop-mark" /> : <span className="send-mark">↑</span>}</button>
             </div>
           </form>
         </section>
@@ -1663,6 +1892,13 @@ function App() {
 }
 
 export default App
+
+
+
+
+
+
+
 
 
 
